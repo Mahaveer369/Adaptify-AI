@@ -1,0 +1,32 @@
+# Dependencies
+node_modules/
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Environment files
+.env
+*.env.local
+
+# Firebase
+firebase-service-account.json
+
+# Uploads & vector stores
+backend/uploads/
+fastapi_service/vector_stores/
+
+# Build output
+frontend/dist/
+*.log
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Package lock (optional — keep if you want deterministic installs)
+# package-lock.json

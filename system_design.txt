@@ -1,0 +1,355 @@
+================================================================================
+                        SYSTEM DESIGN DOCUMENT
+                        ----------------------
+                    BriefAI - AI Document Intelligence Platform
+================================================================================
+
+Project Name:  BriefAI
+Tagline:       "Turn Complex Documents into Clear Insights"
+Version:       3.0.0
+Author:        thall
+Last Updated:  2026-02-15
+
+================================================================================
+  1. PROJECT OVERVIEW
+================================================================================
+
+BriefAI is a full-stack AI SaaS web application that takes complex technical
+documents (PDFs, DOCX, images, plain text) and transforms them into simplified,
+audience-tailored outputs using Perplexity AI with a RAG (Retrieval-Augmented
+Generation) pipeline.
+
+Core principle: Every UI feature maps to its own REST API endpoint.
+Only features backed by a working API appear in the interface.
+
+
+================================================================================
+  2. ARCHITECTURE OVERVIEW
+================================================================================
+
+    +-------------------+       +-------------------+       +-------------------+
+    |                   |       |                   |       |                   |
+    |   React Frontend  | ----> |  Node.js Backend  | ----> |  FastAPI NLP      |
+    |   (Vite)          |       |  (Express)        |       |  Service          |
+    |   Port: 5175      |       |  Port: 5000       |       |  Port: 8000       |
+    |                   |       |                   |       |                   |
+    +-------------------+       +-------------------+       +-------------------+
+           |                           |                           |
+           |                           |                           |
+    Firebase Auth              MongoDB (Atlas)             Perplexity AI API
+    (Google OAuth)             (User data, History)        (sonar-pro model)
+                                                                   |
+                                                           LangChain + FAISS
+                                                           (RAG Pipeline)
+
+
+================================================================================
+  3. REQUEST FLOW (End-to-End)
+================================================================================
+
+  User opens browser
+       |
+       v
+  [1] Landing Page (http://localhost:5175)
+       |
+       v
+  [2] Click "Get Started" --> Firebase Google OAuth
+       |
+       v
+  [3] Authentication Page
+       |  - Firebase SDK handles Google sign-in popup
+       |  - On success: Firebase returns JWT token + user profile
+       |  - Frontend stores auth state via onAuthStateChanged listener
+       |
+       v
+  [4] Dashboard (Protected Route)
+       |  - Sidebar shows 4 AI features + History
+       |  - Each feature button shows its API endpoint
+       |
+       v
+  [5] User selects a feature (e.g., "Simplify") and inputs data
+       |
+       v
+  [6] Frontend sends request to Node.js Backend
+       |  - Attaches Firebase JWT in Authorization header
+       |  - For file uploads: uses FormData (multipart)
+       |  - For text-only: uses JSON body
+       |
+       v
+  [7] Node.js Backend receives request
+       |  - Auth middleware verifies Firebase JWT token
+       |  - If file uploaded: Multer saves file, extracts text (PDF parsing)
+       |  - Forwards text + params to FastAPI service via HTTP
+       |
+       v
+  [8] FastAPI NLP Service processes request
+       |  - Chunks text using LangChain RecursiveCharacterTextSplitter
+       |  - Generates embeddings via HuggingFace (all-MiniLM-L6-v2)
+       |  - Stores/retrieves vectors in FAISS (per-user index)
+       |  - Builds prompt with retrieved context
+       |  - Calls Perplexity AI (sonar-pro) for final response
+       |  - Returns structured JSON result
+       |
+       v
+  [9] Response flows back: FastAPI --> Node.js --> Frontend
+       |  - Node.js optionally saves to MongoDB History
+       |  - Frontend renders result in feature-specific format
+       |
+       v
+  [10] User sees AI output (simplified pages / answer / summary / key points)
+
+
+================================================================================
+  4. FEATURE-API MAP
+================================================================================
+
+  +------------------+-------------------+------------------+-------------------+
+  | UI Feature       | Backend Endpoint  | FastAPI Endpoint | NLP Function      |
+  +------------------+-------------------+------------------+-------------------+
+  | Simplify         | POST /api/simplify| POST /process    | process_document()|
+  | Ask Document     | POST /api/ask     | POST /ask        | ask_document()    |
+  | Summarize        | POST /api/summarize| POST /summarize | summarize_text()  |
+  | Key Points       | POST /api/extract | POST /extract    | extract_key_points|
+  | History          | GET /api/history  | --               | --                |
+  | Health Check     | GET /api/health   | GET /health      | --                |
+  +------------------+-------------------+------------------+-------------------+
+
+
+================================================================================
+  5. RAG PIPELINE (Retrieval-Augmented Generation)
+================================================================================
+
+  Input Text
+       |
+       v
+  [Step 1] TEXT CHUNKING
+       |  Tool: LangChain RecursiveCharacterTextSplitter
+       |  Chunk size: 500 chars, overlap: 50 chars
+       |
+       v
+  [Step 2] EMBEDDING GENERATION
+       |  Model: HuggingFace all-MiniLM-L6-v2 (runs locally on CPU)
+       |  Output: 384-dimensional vectors per chunk
+       |
+       v
+  [Step 3] VECTOR STORAGE
+       |  Database: FAISS (Facebook AI Similarity Search)
+       |  Storage: Per-user indexes saved to disk (vector_stores/<user_id>/)
+       |
+       v
+  [Step 4] CONTEXT RETRIEVAL
+       |  Method: Cosine similarity search (top-k=4 chunks)
+       |  Returns most relevant text snippets for the query
+       |
+       v
+  [Step 5] PROMPT CONSTRUCTION
+       |  System prompt + retrieved context + user query
+       |  Audience-specific instructions (executive/manager/client/intern)
+       |
+       v
+  [Step 6] LLM CALL
+       |  Provider: Perplexity AI
+       |  Model: sonar-pro
+       |  API: OpenAI-compatible (base_url = https://api.perplexity.ai)
+       |
+       v
+  [Step 7] RESPONSE PARSING
+       |  Parse JSON from LLM output
+       |  Fallback to raw text if JSON parsing fails
+       |
+       v
+  Structured Output (pages / answer / summary / key_points)
+
+
+================================================================================
+  6. TECHNOLOGY STACK
+================================================================================
+
+  LAYER             TECHNOLOGY                PURPOSE
+  ─────────────────────────────────────────────────────────────────────────
+  Frontend          React 18 + Vite           UI framework + bundler
+  Styling           Vanilla CSS               Premium dark theme, glassmorphism
+  Auth              Firebase Auth             Google OAuth sign-in
+  Backend           Node.js + Express         REST API gateway
+  File Handling     Multer + pdf-parse        Upload + PDF text extraction
+  Database          MongoDB (Atlas)           User profiles, history storage
+  NLP Service       Python + FastAPI          AI processing microservice
+  AI Model          Perplexity AI (sonar-pro) Large language model
+  RAG Framework     LangChain                 Text splitting, chains
+  Vector DB         FAISS                     Similarity search
+  Embeddings        HuggingFace Transformers  all-MiniLM-L6-v2 (local)
+  File Parsing      pdfplumber, python-docx   PDF/DOCX text extraction
+  OCR               pytesseract + Pillow      Image text extraction
+
+
+================================================================================
+  7. FILE STRUCTURE
+================================================================================
+
+  project/
+  ├── frontend/                    # React frontend (Vite)
+  │   ├── index.html               # Entry HTML
+  │   ├── package.json             # Dependencies: react, firebase, react-dropzone
+  │   ├── vite.config.js           # Vite configuration
+  │   └── src/
+  │       ├── main.jsx             # App entry: routes, auth listener
+  │       ├── index.css            # Design system (dark theme, animations)
+  │       ├── firebase.js          # Firebase config + Google provider
+  │       └── pages/
+  │           ├── LandingPage.jsx  # Public landing with feature cards
+  │           ├── Authentication.jsx # Google OAuth sign-in page
+  │           └── Dashboard.jsx    # Main app: feature-tabbed layout
+  │
+  ├── backend/                     # Node.js backend (Express)
+  │   ├── server.js                # Express app, CORS, route mounting
+  │   ├── package.json             # Dependencies: express, mongoose, multer
+  │   ├── .env                     # Environment variables
+  │   ├── middleware/
+  │   │   └── auth.js              # Firebase JWT verification middleware
+  │   ├── models/
+  │   │   ├── User.js              # Mongoose user schema
+  │   │   └── History.js           # Mongoose history schema
+  │   └── routes/
+  │       ├── auth.js              # POST /api/auth/verify
+  │       ├── simplify.js          # POST /api/simplify
+  │       ├── ask.js               # POST /api/ask
+  │       ├── summarize.js         # POST /api/summarize
+  │       ├── extract.js           # POST /api/extract
+  │       ├── history.js           # GET/DELETE /api/history
+  │       └── user.js              # GET /api/user/profile
+  │
+  ├── fastapi_service/             # Python NLP microservice (FastAPI)
+  │   ├── main.py                  # FastAPI app, endpoints, CORS
+  │   ├── nlp_engine.py            # RAG pipeline, Perplexity AI integration
+  │   ├── requirements.txt         # Python dependencies
+  │   ├── .env                     # Perplexity API key
+  │   ├── vector_stores/           # Per-user FAISS indexes (auto-created)
+  │   └── utils/
+  │       ├── __init__.py
+  │       └── file_parser.py       # PDF, DOCX, image text extraction
+  │
+  └── system_design.txt            # This file
+
+
+================================================================================
+  8. DATA FLOW PER FEATURE
+================================================================================
+
+  ┌─────────────────────────────────────────────────────────────────────┐
+  │ SIMPLIFY DOCUMENT                                                   │
+  │                                                                     │
+  │ Input:  text + files + audience_level                               │
+  │ Flow:   Frontend -> POST /api/simplify -> POST /process             │
+  │ RAG:    Chunk -> Embed -> FAISS store -> Retrieve context           │
+  │ AI:     Perplexity generates page-by-page simplified output         │
+  │ Output: { pages: [{ page_number, title, simplified_text }] }        │
+  └─────────────────────────────────────────────────────────────────────┘
+
+  ┌─────────────────────────────────────────────────────────────────────┐
+  │ ASK DOCUMENT (Q&A)                                                  │
+  │                                                                     │
+  │ Input:  text + files + question                                     │
+  │ Flow:   Frontend -> POST /api/ask -> POST /ask                      │
+  │ RAG:    Chunk -> Embed -> FAISS -> Retrieve relevant context        │
+  │ AI:     Perplexity answers question from document context           │
+  │ Output: { answer, confidence, relevant_excerpt }                    │
+  └─────────────────────────────────────────────────────────────────────┘
+
+  ┌─────────────────────────────────────────────────────────────────────┐
+  │ SUMMARIZE TEXT                                                      │
+  │                                                                     │
+  │ Input:  text (paste/type)                                           │
+  │ Flow:   Frontend -> POST /api/summarize -> POST /summarize          │
+  │ RAG:    No vector store needed (direct text)                        │
+  │ AI:     Perplexity generates concise paragraph summary              │
+  │ Output: { summary, word_count, key_topics[] }                       │
+  └─────────────────────────────────────────────────────────────────────┘
+
+  ┌─────────────────────────────────────────────────────────────────────┐
+  │ EXTRACT KEY POINTS                                                  │
+  │                                                                     │
+  │ Input:  text + files                                                │
+  │ Flow:   Frontend -> POST /api/extract -> POST /extract              │
+  │ RAG:    Chunk -> Embed -> FAISS store                               │
+  │ AI:     Perplexity extracts structured key points                   │
+  │ Output: { key_points[{point, importance}], overall_theme,           │
+  │           action_items[] }                                          │
+  └─────────────────────────────────────────────────────────────────────┘
+
+
+================================================================================
+  9. SECURITY & ERROR HANDLING
+================================================================================
+
+  SECURITY:
+  - Firebase JWT token verification on all backend routes
+  - Demo mode fallback when Firebase service account is absent
+  - API keys stored in .env files (never committed to git)
+  - File upload size limits (10MB max)
+  - File type filtering (PDF, DOCX, images only)
+  - CORS restricted to frontend origins
+
+  ERROR HANDLING (Defense in Depth):
+  - Frontend:  try/catch on all API calls + toast notifications
+  - Backend:   try/catch per route + mock response fallbacks
+  - FastAPI:   try/except at every level:
+               * Import-level (graceful degradation if lib missing)
+               * Embedding model loading
+               * FAISS index build/load/save
+               * Context retrieval
+               * Perplexity API calls
+               * JSON response parsing
+               * Pipeline orchestration
+  - Result:    App NEVER crashes — always returns a fallback response
+
+
+================================================================================
+  10. DEPLOYMENT & STARTUP
+================================================================================
+
+  DEVELOPMENT (Local):
+
+  Terminal 1 - FastAPI:
+    cd fastapi_service
+    pip install -r requirements.txt
+    python main.py                        # Runs on port 8000
+
+  Terminal 2 - Backend:
+    cd backend
+    npm install
+    node server.js                        # Runs on port 5000
+
+  Terminal 3 - Frontend:
+    cd frontend
+    npm install
+    npx vite --host                       # Runs on port 5173+
+
+  ENVIRONMENT VARIABLES:
+
+  backend/.env:
+    PORT=5000
+    MONGODB_URI=mongodb+srv://<user>:<pass>@cluster.mongodb.net/briefai
+    FASTAPI_URL=http://localhost:8000
+    PERPLEXITY_API_KEY=pplx-...
+    FIREBASE_SERVICE_ACCOUNT_PATH=./firebase-service-account.json
+
+  fastapi_service/.env:
+    PERPLEXITY_API_KEY=pplx-...
+
+
+================================================================================
+  11. FUTURE ENHANCEMENTS
+================================================================================
+
+  - [ ] PDF export (generate downloadable PDF reports)
+  - [ ] Real-time streaming responses (SSE/WebSocket)
+  - [ ] Multi-language document support
+  - [ ] Batch document processing
+  - [ ] Team/workspace collaboration
+  - [ ] Custom fine-tuned models per organization
+  - [ ] Analytics dashboard (usage stats, popular features)
+  - [ ] Webhook integrations (Slack, Teams, Email)
+
+================================================================================
+                              END OF DOCUMENT
+================================================================================
